@@ -1,0 +1,98 @@
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <TinyGPS++.h>
+#include <EEPROM.h>
+#include <SD.h>
+
+// OLED display settings
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET -1
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+// GPS settings
+TinyGPSPlus gps;
+HardwareSerial &gpsSerial = Serial1;
+
+// UBX command to query the current dynamic model
+uint8_t queryNav5[] = {
+  0xB5, 0x62, 0x06, 0x24, 0x00, 0x00, 0x2A, 0x84
+};
+
+void setup() {
+  // Initialize serial communication with USB (for debugging)
+  Serial.begin(115200);
+  while (!Serial);
+
+  // Initialize serial communication with GPS module
+  gpsSerial.begin(9600); // Default baud rate for GPS module
+
+  // Initialize OLED display
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) { // Updated address
+    Serial.println(F("SSD1306 allocation failed"));
+    for (;;);
+  }
+  display.display();
+  delay(2000);
+  display.clearDisplay();
+
+  // Send the UBX command to query the current dynamic model
+  gpsSerial.write(queryNav5, sizeof(queryNav5));
+
+  // Display waiting message
+  display.setTextSize(2);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0, 0);
+  display.print("Checking");
+  display.setCursor(0, 24);
+  display.print("GPS Mode...");
+  display.display();
+}
+
+void loop() {
+  static uint8_t buffer[36];
+  static size_t bufferIndex = 0;
+
+  // Read GPS data
+  while (gpsSerial.available()) {
+    uint8_t c = gpsSerial.read();
+    if (bufferIndex < sizeof(buffer)) {
+      buffer[bufferIndex++] = c;
+    }
+
+    // Check for the end of the NAV5 message
+    if (bufferIndex >= 36) {
+      if (buffer[0] == 0xB5 && buffer[1] == 0x62 && buffer[2] == 0x06 && buffer[3] == 0x24) {
+        uint8_t dynamicModel = buffer[8]; // Dynamic model byte
+
+        // Display the current dynamic model
+        display.clearDisplay();
+        display.setTextSize(2);
+        display.setTextColor(SSD1306_WHITE);
+        display.setCursor(0, 0);
+
+        switch (dynamicModel) {
+          case 6:
+            display.print("Airborne <1G");
+            break;
+          case 7:
+            display.print("Airborne <2G");
+            break;
+          case 8:
+            display.print("Airborne <4G");
+            break;
+          default:
+            display.print("Other Mode");
+            break;
+        }
+        display.display();
+
+        // Print to serial for debugging
+        Serial.print("Dynamic Model: ");
+        Serial.println(dynamicModel);
+      }
+      bufferIndex = 0; // Reset buffer index for the next message
+    }
+  }
+}
